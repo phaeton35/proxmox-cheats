@@ -114,12 +114,12 @@
 | `/etc/pve/qemu-server/<VMID>.conf` | Конфиг VM |
 | `/etc/pve/lxc/<CTID>.conf` | Конфиг контейнера |
 | `/etc/pve/storage.cfg` | Хранилища |
-| `/etc/pve/cluster.conf` (corosync.conf) | Кластер |
+| `/etc/pve/corosync.conf` | Кластер |
 | `/etc/pve/user.cfg` | Пользователи и права |
 | `/etc/pve/firewall/*.fw` | Правила файрвола |
 | `/etc/pve/priv/` | Ключи, токены, пароли |
 
-> 🔴 `/etc/pve` меняется утилитами (`qm set`, `pct set`) или напрямую файлом, но **не редактируй** его на неработающем кластере без понимания: pmxcfs хранит себя в `/var/lib/pve-cluster/config.db`, и полная потеря этого файла = потеря всех конфигов VM. Регулярно бэкапь: `pvecm get-ssh-info` не нужен — просто скопируй `/var/lib/pve-cluster/config.db` и `/etc/pve/*.cfg`.
+> 🔴 `/etc/pve` меняется утилитами (`qm set`, `pct set`) или напрямую файлом, но **не редактируй** его на неработающем кластере без понимания: pmxcfs хранит себя в `/var/lib/pve-cluster/config.db`, и полная потеря этого файла = потеря всех конфигов VM. Регулярно бэкапь: скопируй `/var/lib/pve-cluster/config.db` и `/etc/pve/*.cfg`.
 
 ### 0.4. Веб-интерфейс
 
@@ -175,7 +175,7 @@ apt dist-upgrade              # обновление узла PVE — тольк
 | `qm shutdown 100` | Корректное выключение (через guest-агент или ACPI) |
 | `qm reboot 100` / `qm reset 100` | Перезагрузка / жёсткий сброс 🔴 |
 | `qm suspend 100` / `qm resume 100` | Пауза с сохранением в память |
-| `qm destroy 100` | 🔴 Удалить VM со всеми дисками (диски — только с `--purge`/`--destroy-unreferenced-disks 0` нюансы; проверь `--help`) |
+| `qm destroy 100` | 🔴 Удалить VM; по умолчанию удаляются и её диски, на которые никто больше не ссылается (`--destroy-unreferenced-disks 0` — оставить диски; `--purge` — вычистить и из HA/бэкапов конфигов) |
 | `qm pending 100` | Показать применённые и ожидающие применения изменения |
 
 ### Создание VM из CLI
@@ -231,7 +231,7 @@ qm status 100 --verbose | grep -E 'memory|cpus|maxmem'
 ```bash
 pveam update                          # обновить список шаблонов
 pveam available --section system      # что можно скачать
-pveam download local vztmpl/debian-12-standard_12.7-1_amd64.tar.zst
+pveam download local debian-12-standard_12.7-1_amd64.tar.zst
 pveam list local                      # скачанные шаблоны
 ```
 
@@ -260,7 +260,7 @@ pct create 102 local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst \
   --rootfs local-lvm:10 \
   --net0 name=eth0,bridge=vmbr0,ip=192.168.1.50/24,gw=192.168.1.1 \
   --unprivileged 1 \
-  --features nesting=1 \        # для Docker внутри LXC
+  --features nesting=1 \      # nesting=1 нужен для Docker внутри LXC
   --onboot 1 --start 1
 ```
 
@@ -277,7 +277,7 @@ qm set 100 --scsi1 local-lvm:20          # добавить диск 20G
 qm resize 100 scsi0 +10G                # увеличить диск (гостевая ФС расширяется отдельно)
 qm move-disk 100 scsi0 storage-nvme --delete   # переместить диск на другое хранилище
 qm unlink 100 --idlist scsi1             # отвязать диск без удаления
-qm disk import 100 ubuntu.qcow2 local-lvm   # импорт образа (qcow2/raw/vmdk/vdi/vhdx)
+qm importdisk 100 ubuntu.qcow2 local-lvm     # импорт образа (PVE 8.x; в PVE 9 — qm disk import)
 ```
 
 ### qemu-img — работа с образами
@@ -490,7 +490,7 @@ ha-manager add ct:101
 ha-manager remove vm:100                # снять с HA (VM остаётся)
 ha-manager migrate vm:100 node2         # ручной переезд с HA-параметрами
 ha-manager relocate vm:100 node2        # 🟡 relocate без учёта состояния (техобслуживание)
-ha-manager shutdown node2               # плановый вывод узла: HA сам переедет ресурсы
+# Плановый вывод узла: Maintenance mode в GUI (PVE 8.2+) или ручная миграция ha-manager migrate
 ```
 
 > 🔴 Если узлов меньше трёх и нет QDevice, при падении узла кластер потеряет quorum, и HA **не сработает** на оставшихся узлах. Quorum — фундамент HA.
@@ -543,7 +543,7 @@ iface vmbr0 inet static
 
 ```bash
 qm set 100 --net0 virtio,bridge=vmbr0,tag=10            # VLAN 10 у VM
-qm set 100 --net0 virtio,bridge=vmbr0,trunk=1           # 🟡 транк: все VLAN в гостя
+qm set 100 --net0 virtio,bridge=vmbr0,trunks=10;20;30     # 🟡 транк: список VLAN в гостя
 ```
 
 > 🟡 **SDN** (PVE 8+): зоны VLAN/VXLAN/QinQ в Datacenter → SDN — отдельные виртуальные сети с тегами для групп VM/CT. Настройка через веб-интерфейс, конфиги в `/etc/pve/sdn/`.
@@ -634,7 +634,7 @@ zfs snapshot tank/vmdata@before-upgrade
 zfs send tank/vmdata@snap | ssh root@backup zfs recv tank2/vmdata@snap   # репликация
 ```
 
-> 💡 Снапшоты ZFS бесплатны по месту «до изменений». ARCoM (авто-замена дисков) и зеркалирование — читай [Proxmox wiki: ZFS](https://pve.proxmox.com/wiki/ZFS_on_Linux). ARC кэш ест память: `zfs set primarycache=all` и `arc_max` под контролируй, чтобы хост не swap'ал.
+> 💡 Снапшоты ZFS бесплатны по месту «до изменений». ARCoM (авто-замена дисков) и зеркалирование — читай [Proxmox wiki: ZFS](https://pve.proxmox.com/wiki/ZFS_on_Linux). ARC кэш ест память: ограничивай его параметром модуля `zfs_arc_max` (например: `echo 8G > /sys/module/zfs/parameters/zfs_arc_max`), чтобы хост не swap'ал.
 
 ---
 
@@ -662,7 +662,7 @@ pveceph createosd /dev/sdb    # добавить диск как OSD (🔴 со�
 journalctl -u pvedaemon           # API-демон
 journalctl -u pveproxy           # веб-интерфейс (8006)
 journalctl -u pve-cluster        # pmxcfs/corosync
-journalctl -u qmeventdaemon
+journalctl -u qmeventd
 grep -R "ERROR" /var/log/pve/tasks/       # 🔴 последняя задача
 cat /var/log/pve/tasks/active            # что выполняется прямо сейчас
 ls -lt /var/log/pve/tasks/ | head         # свежие логи задач (бэкапы, миграции)
@@ -684,7 +684,7 @@ pveversion                             # проверить, что стало �
 reboot                                  # после обновления ядра — перезагрузка узла
 
 # Плановое обслуживание узла в кластере:
-pvecm expected 2      # 🟡 при выводе из строя узла из кластера на 3 — не нужно, quorum есть
+# На кластере из 3 узлов после потери одного quorum сохраняется сам (2 из 3) — pvecm expected менять не нужно
 qm migrate 100 node2  # увести ресурсы
 ```
 
@@ -702,13 +702,13 @@ qm migrate 100 node2  # увести ресурсы
 dmesg | grep -e DMAR -e IOMMU      # проверить, что включился
 pvesh get /nodes/pve1/hardware/pci --pci-class-blacklist ""   # список PCI-устройств
 qm set 100 -hostpci0 0000:01:00.0  # передать GPU (все функции: pcie=1 см. wiki)
-qm set 100 -hostpci0 0000:01:00,pcie=1,x-vga=1   # 🟡 как основная видеокарта
+qm set 100 -hostpci0 0000:01:00.0,pcie=1,x-vga=1   # 🟡 как основная видеокарта
 ```
 
 ### CPU и память
 
 ```bash
-qm set 100 --cpu host              # тип CPU: host = как у хоста (нужен для GNS2/nested-virt)
+qm set 100 --cpu host              # тип CPU: host = как у хоста (нужен для GNS3/nested-virt)
 qm set 100 --numa 1                # NUMA-топология для больших VM
 qm set 100 --balloon 1024          # ballooning: минимальная память в живую (1024 из 4096)
 qm set 100 --hotplug memory,disk,cpu,net   # горячее подключение ресурсов
@@ -764,7 +764,7 @@ esac
 | Веб-интерфейс недоступен | `systemctl status pveproxy` → `journalctl -u pveproxy`, `ss -tlnp \| grep 8006` |
 | Бэкап не вылез по NFS | `showmount -e server`, `pvesm status`, `mount \| grep backup`, проверь экспорт-опции `no_root_squash` |
 | Диск VM переполнен внутри гостя | `qm resize 100 scsi0 +10G`, потом внутри гостя `growpart`/`resize2fs` (или `lvextend` в LXC) |
-| Высокий load на хосте | `top` → какой KVM-процесс? → внутри VM; `qm status <id> --verbose \| grep cpu`; `iostat -x 1` (ust-IO?) |
+| Высокий load на хосте | `top` → какой KVM-процесс? → внутри VM; `qm status <id> --verbose \| grep cpu`; `iostat -x 1` (disk-IO?) |
 | OOM-killer убивает процессы хоста | `dmesg -T \| grep -i 'killed process'` → уменьшить ballooning `--balloon`, выключить KSM для точности; следи за ARC (ZFS) |
 | Corosync: кластер «дрожит» | `journalctl -u corosync`, задержки (`ping` между узлами), дубликаты ring-адресов? — `corosync-cfgtool -t` |
 | IP VM не виден в GUI | Guest-агент не запущен или `--agent enabled=0` → включи и проверь `qm agent <id> ping` |
@@ -858,7 +858,7 @@ pvecm status                             # убедиться: Quorate, 3 гол
 ### Сценарий 4. Вывод узла в обслуживание
 
 ```bash
-ha-manager shutdown pve2       # HA-ресурсы переедут сами
+# HA-ресурсы: Maintenance mode для pve2 в GUI или перевези их ha-manager migrate вручную
 qm migrate 100 pve3            # остальные — вручную
 pct migrate 101 pve3
 apt update && apt dist-upgrade && reboot
@@ -875,7 +875,7 @@ apt update && apt dist-upgrade && reboot
 
 ```bash
 pveam update
-pveam download local vztmpl/debian-12-standard_12.7-1_amd64.tar.zst
+pveam download local debian-12-standard_12.7-1_amd64.tar.zst
 pct create 110 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
   --hostname lab-ct --memory 1024 --rootfs local-lvm:8 --unprivileged 1 \
   --net0 name=eth0,bridge=vmbr0,ip=192.168.1.60/24,gw=192.168.1.1 --start 1
@@ -909,7 +909,7 @@ qm delsnapshot 100 pre-upgrade   # когда всё стабильно — уд
 qm resize 100 scsi0 +10G
 # внутри гостя (Linux):
 sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1     # ext4
-# или: sudolvextend -r -l +100%FREE /dev/vg0/root        # LVM
+# или: sudo lvextend -r -l +100%FREE /dev/vg0/root       # LVM
 ```
 </details>
 
@@ -977,7 +977,7 @@ pvecm create lab --link0 10.0.0.11
 # pve2:
 pvecm add 10.0.0.11 --link0 10.0.0.12
 # qdevice (любой Linux, можно не PVE):
-apt install corosync-qdevice
+apt install corosync-qnetd
 # на pve1:
 pvecm qdevice setup 10.0.0.13
 pvecm status    # убедиться: 3 голоса, Quorate
@@ -992,7 +992,7 @@ ha-manager add vm:100
 ha-manager status
 # Жёсткое отключение узла (имитация падения) — на самом узле по питанию;
 # либо корректный тест:
-ha-manager shutdown pve1
+# Жёсткое отключение узла — лучший тест HA; плановый вывод — через Maintenance mode
 ha-manager status       # VM 100 должна переехать и запуститься на pve2
 ```
 </details>
