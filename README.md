@@ -692,6 +692,53 @@ qm migrate 100 node2  # увести ресурсы
 
 ---
 
+### 🟡 Обслуживание ФС и хранилищ: LVM-thin, ZFS, ext4, TRIM, SMART
+
+#### TRIM и discard (не давать тонким пулам «раздуваться»)
+
+```bash
+# В VM: диск должен быть virtio-scsi с discard=on
+qm set 100 --scsi0 local-lvm:vm-100-disk-0,discard=on
+# Внутри гостя Linux: периодический fstrim (обычно уже есть fstrim.timer)
+systemctl status fstrim.timer && sudo fstrim -av
+
+# LXC: rootfs тоже поддерживает discard
+pct set 101 --rootfs local-lvm:8,discard=on
+
+# LVM-thin на хосте: manual trim тонкого пула
+fstrim -av                  # на хосте — смонтированные thin-тома
+lvs -a                      # Data% тонкого пула — контролируй заполнение!
+```
+
+> 💡 Если Data% тонкого пула подходит к 100%, пул **зависает** (не просто «место кончилось»). Держи ниже 80% и следи за `lvs` — у тонкого пула есть и метаданные (Meta%).
+
+#### ZFS-пул: регулярное обслуживание
+
+```bash
+zpool status -v                       # ошибки, resilver в процессе
+zpool scrub tank                      # раз в месяц (systemd-таймеры zfs-scrub-weekly@tank / monthly)
+zpool trim tank                       # TRIM на SSD-пулах; постоянный: zpool set autotrim=on tank
+arcstat 1                             # ARC-кэш: hit-rate
+# Ограничить ARC (по умолчанию до 50% RAM), постоянно:
+echo 'options zfs zfs_arc_max=8589934592' | sudo tee /etc/modprobe.d/zfs.conf
+update-initramfs -u -k all
+```
+
+> 💡 В веб-интерфейсе: Node → Disks — SMART и статус дисков. Уведомления о scrub-ошибках приходят через ZED (mail/Notification, PVE 8+: Datacenter → Notification).
+
+#### ext4/загрузка
+
+```bash
+smartctl -a /dev/sda                  # SMART диска (пакет smartmontools)
+sudo e2fsck -f /dev/pve/root          # 🔴 только с размонтированной ФС (загрузка с live/rescue)
+# Расширение root после увеличения диска узла:
+growpart /dev/sda 1 && resize2fs /dev/sda1
+```
+
+> 💡 Дефрагментация на хосте Proxmox не нужна ни для ext4 (extent-аллокатор), ни для ZFS (CoW). «Тормозит» — ищи в IO-задержке: `iostat -x 1` (await), а не во фрагментации.
+
+---
+
 ## 🟡 21. Для профи: passthrough, hooks, тонкая настройка
 
 ### PCI passthrough (GPU, HBA, NIC в гостя)
