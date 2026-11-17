@@ -22,3 +22,9 @@
 - Авторская русская шпаргалка (`README.md`) — MIT.
 - Материалы из `sources/cdocsa-cheat-sheets/` — AGPL-3.0-or-later (в каждом файле сохранён исходный фронтматтер с лицензией).
 - `sources/AmmarTee-proxmox.md` — MIT.
+
+## Внешние источники (только чтение)
+
+Репозитории без лицензии — используем как справочник для проверки фактов и вдохновения, **копирование текста запрещено** (по умолчанию действует копирайт автора):
+
+- [Lifailon/rudocs](https://github.com/Lifailon/rudocs) · 🇷🇺 RU · **без лицензии** — большая база заметок по PowerShell (`posh.md`), Linux/Bash (`linux.md`: ядро, strace, auditd, systemd, journald, LVM/RAID, сеть) и DevOps (`devops.md`: Git, SQL, Docker/Compose, Kubernetes, Jenkins), 684⭐, активно поддерживается (сайт: [lifailon.github.io](https://lifailon.github.io)). Смежные репо: [golang-cheat-sheet-ru](https://github.com/Lifailon/golang-cheat-sheet-ru), [node.js-cheat-sheet-ru](https://github.com/Lifailon/node.js-cheat-sheet-ru) — тоже без лицензии.
