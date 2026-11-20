@@ -779,6 +779,49 @@ systemctl enable --now fstrim.timer
 | Здоровье дисков | `smartctl -a /dev/sdX`, smartd | постоянно |
 | Бэкап конфигурации | `/etc` + `/etc/lvm/{backup,archive}` | перед обновлением / еженедельно |
 
+#### 🟡 Автообновления безопасности: unattended-upgrades
+
+> Proxmox — это Debian, и на хосте работает обычный `unattended-upgrades`. **Ловушка: по умолчанию он НИКОГДА не обновит пакеты PVE** (pve-manager, qemu-server, pve-qemu-kvm…) — их Release-файл имеет `Origin: Proxmox`, а дефолтные паттерны пропускают только `origin=Debian`. Debian-библиотеки будут лататься, а сам Proxmox и его ядро — нет.
+
+```bash
+apt install unattended-upgrades apt-listchanges
+```
+
+▸ PVE 8 (bookworm) / PVE 9 (trixie), репозиторий pve-no-subscription:
+
+```
+// /etc/apt/apt.conf.d/52unattended-upgrades-local — не правь пакстный 50unattended-upgrades!
+// строки Origins-Pattern из разных conf-файлов ОБЪЕДИНЯЮТСЯ (merge);
+// стоковый 50unattended уже разрешает label=Debian — при строгой конфигурации обнули:
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+    "o=Proxmox,codename=${distro_codename},l=Proxmox Debian Repository";   // обновления PVE
+};
+Unattended-Upgrade::Package-Blacklist {
+    "pve-manager";       // мажорные версии PVE — только вручную
+    "proxmox-kernel-";   // ядро PVE — вручную, с перезагрузкой в окно обслуживания
+    "zfsutils-linux";    // ZFS-стек обновлять осознанно
+};
+Unattended-Upgrade::Automatic-Reboot "false";   // на гипервизоре перезагрузка — только плановая
+Unattended-Upgrade::Mail "root";
+Unattended-Upgrade::MailReport "only-on-error";
+```
+
+// Для Enterprise-репозитория — l=Proxmox Debian Enterprise Repository (или l=Proxmox VE Enterprise)
+
+Проверить фактические Origin/Label своего зеркала:
+
+```bash
+curl -s https://download.proxmox.com/debian/pve/dists/$(. /etc/os-release && echo $VERSION_CODENAME)/Release \
+  | grep -E 'Origin|Label'
+unattended-upgrade --dry-run --debug    # "Allowed origins are:" — что реально обновится
+```
+
+> 🔴 **Кластер:** автообновление узлов вразнобой расщепляет версии пакетов между нодами и ломает живые миграции (несовпадение ABI/версий). Для кластера: unattended только на Debian-security + уведомления, обновление пакетов PVE — в окно обслуживания по одному узлу (см. выше в этом разделе). Авто-перезагрузка (`Automatic-Reboot`) гипервизора с живыми VM по таймеру — 🔴 включать только осознанно.
+
+> 💡 Шаблоны LXC: включи unattended-upgrades в шаблон до клонирования — все клоны получат конфигурацию автоматически.
+
 ---
 
 ## 🟡 21. Для профи: passthrough, hooks, тонкая настройка
